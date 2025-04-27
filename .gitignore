@@ -1,0 +1,27 @@
+# Exclude these folders
+__pycache__/
+data/
+meta_data/
+results_split_14_15/
+results_split_optimal_14_15/
+weights_split_14_15/
+weights_split_optimal_14_15/
+
+# Ignore backup files (optional)
+*.pkl
+*.pth
+*.ckpt
+*.csv
+*.npy
+
+# Ignore system files
+.DS_Store
+Thumbs.db
+
+# Ignore virtual envs if any
+venv/
+env/
+
+# Jupyter notebook checkpoints
+.ipynb_checkpoints/
+
