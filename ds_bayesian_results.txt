@@ -1,0 +1,16 @@
+🏆 Best hyperparameters:
+    • pre_train_epochs: 2
+    • n_coupling_layers: 3
+    • coupling_hidden_dim: 64
+    • flow_lr: 0.001672001616746327
+    • flow_wd: 0.002404240921660761
+▶ Best DS test accuracy:          0.7874
+▶ Corresponding flow test accuracy: 0.7874
+
+🏆 Best hyperparameters:
+    • fusion_tau: 1.0338074495605027
+    • fusion_lambda: 0.2947762779863763
+    • norm_pct: 0.5407014103726435
+    • softmax_temp: 3.7677272126692687
+▶ Best DS test accuracy:          0.7878
+▶ Corresponding flow test accuracy: 0.7836
