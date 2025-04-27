@@ -13,3 +13,4 @@ weights_split_optimal_14_15/
 *.ckpt
 *.csv
 *.npy
+*.txt
