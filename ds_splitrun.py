@@ -5,6 +5,7 @@ import pickle
 
 from tqdm import tqdm
 from sklearn.utils.class_weight import compute_class_weight
+from sklearn.model_selection import train_test_split
 
 import torch
 from torch import nn, optim, autograd
@@ -55,9 +56,6 @@ args.n_coupling_layers   = 3
 args.coupling_hidden_dim = 64
 args.flow_lr             = 0.001672001616746327
 args.flow_wd             = 0.002404240921660761
-args.fusion_tau         = 1.0
-args.fusion_lambda      = 0.0
-args.softmax_temp      = 1.0
 
 
 print('Args:')
@@ -65,8 +63,6 @@ for k, v in sorted(vars(args).items()):
   print("\t{}: {}".format(k, v))
 
 # Set CUDA
-# if args.cuda:
-#     torch.cuda.set_device(args.gpu)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f"Using device: {device}")
 if torch.cuda.is_available():
@@ -82,10 +78,6 @@ if args.remove_channels:
 channels = np.array([i for i in range(args.num_channels) if i not in rm_ch])
 
 # Load data.
-# if args.rm_ch_str != '':
-#     data_path = args.data_path + '_' + args.rm_ch_str +'_notevt_' + str(args.contig_len) + '.pkl'
-# else:
-#     data_path = args.data_path +'_notevt_' + str(args.contig_len) + '.pkl'
 data_path = './data/wmci_wctrl_200-contig-len_time_domain.pkl'
 all_data = pickle.load(open(data_path, 'rb'))
 
@@ -161,12 +153,16 @@ for run in range(args.runs):
     # For normalization
     n = get_norms(args, data, channels, typs)
 
+    train_locs, val_locs = train_test_split(train_locs, test_size=0.2, random_state=42, shuffle=True)
+
     train_dataset = EEGDataset(data_dict=data, locs=train_locs, study=args.study, treat=args.treat, norms=n)
+    val_dataset = EEGDataset(data_dict=data, locs=val_locs, study=args.study, treat=args.treat, norms=n)
     test_dataset = EEGDataset(data_dict=data, locs=test_locs, study=args.study, treat=args.treat, norms=n)
 
     # Get Dataloaders
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-    test_dataloader = DataLoader(test_dataset, batch_size=32, shuffle=False)
+    val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+    test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
 
     # Get Model
@@ -246,15 +242,15 @@ for run in range(args.runs):
     # flow_optimizer = optim.Adam(flow_model.parameters(), lr=0.01, weight_decay=0.01)
 
     flow_model = RealNVP(
-        num_coupling_layers   = args.n_coupling_layers,    # now 3
+        num_coupling_layers   = args.n_coupling_layers, 
         input_dim             = train_latents.shape[1],
-        hidden_dim            = args.coupling_hidden_dim   # now 64
+        hidden_dim            = args.coupling_hidden_dim
     ).to(device)
 
     flow_optimizer = optim.Adam(
         flow_model.parameters(),
-        lr           = args.flow_lr,    # now 0.001672…
-        weight_decay = args.flow_wd     # now 0.002404…
+        lr           = args.flow_lr, 
+        weight_decay = args.flow_wd  
     )
 
 
@@ -301,27 +297,16 @@ for run in range(args.runs):
     tot = 0
     print ('Evaluating on test data...')
     for X, y in tqdm(test_dataloader):
-        # hidden = model.conv_layers(X).view(X.shape[0], -1)
-        # likelihood = torch.exp(flow_model.score_samples(hidden))
-        # likelihood = likelihood.unsqueeze(1)
-        # likelihood = likelihood / train_likelihood_max
-        # logits = model.fc_layers(hidden) * likelihood.float()
-        # compute and normalize log‐densities
         z = model.conv_layers(X).view(X.shape[0], -1)
         log_lk = flow_model.score_samples(z).unsqueeze(1)
         mean_log = log_lk.mean(0, keepdim=True)
         std_log  = log_lk.std(0, keepdim=True) + 1e-6
         norm_log_lk = (log_lk - mean_log) / std_log
 
-        # exponentiate (if you still want multiplicative fusion)
+        # exponentiate
         scaled_lk = torch.exp(norm_log_lk)
 
-        # fuse
-        fused = model.fc_layers(z) * (scaled_lk ** args.fusion_tau) \
-                + args.fusion_lambda * norm_log_lk
-
-        # final predictions
-        logits = fused / args.softmax_temp
+        logits = model.fc_layers(z) * scaled_lk
 
         if preds is not None:
             predictions = torch.cat((predictions, logits.detach().cpu()))
@@ -363,26 +348,14 @@ for run in range(args.runs):
         for idx, (X, y) in enumerate(train_dataloader):
             loss_value = 0
             optimizer.zero_grad()
-            # hidden = model.conv_layers(X).view(X.shape[0], -1)
-            # likelihood = torch.exp(flow_model.score_samples(hidden))
-            # likelihood = likelihood.unsqueeze(1)
-            # likelihood = likelihood / train_likelihood_max
-            # logits = model.fc_layers(hidden) * likelihood.float()
-            # 1) forward through conv
+            
             z = model.conv_layers(X).view(X.size(0), -1)
-            # 1) get latent code z
             log_lk = flow_model.score_samples(z).unsqueeze(1)
-            # 2) z‐score in log‐space
             mean_log = log_lk.mean(0, keepdim=True)
             std_log  = log_lk.std(0, keepdim=True) + 1e-6
             norm_log_lk = (log_lk - mean_log) / std_log
-            # 3) if you want multiplicative: exp back
             scaled_lk = torch.exp(norm_log_lk)
-            # 4) fuse
-            fused = model.fc_layers(z) * (scaled_lk ** args.fusion_tau) \
-                    + args.fusion_lambda * norm_log_lk
-            # 5) scale/softmax
-            logits = fused / args.softmax_temp
+            logits = model.fc_layers(z) * scaled_lk
 
             loss_value = nll(logits, y)
 
@@ -410,27 +383,13 @@ for run in range(args.runs):
     tot = 0
     print ('Evaluating on test data...')
     for X, y in tqdm(test_dataloader):
-        # hidden = model.conv_layers(X).view(X.shape[0], -1)
-        # likelihood = torch.exp(flow_model.score_samples(hidden))
-        # likelihood = likelihood.unsqueeze(1)
-        # likelihood = likelihood / train_likelihood_max
-        # logits = model.fc_layers(hidden) * likelihood.float()
-        # 1) forward through conv
         z = model.conv_layers(X).view(X.size(0), -1)
-        # 1) get latent code z
         log_lk = flow_model.score_samples(z).unsqueeze(1)
-        # 2) z‐score in log‐space
         mean_log = log_lk.mean(0, keepdim=True)
         std_log  = log_lk.std(0, keepdim=True) + 1e-6
         norm_log_lk = (log_lk - mean_log) / std_log
-        # 3) if you want multiplicative: exp back
         scaled_lk = torch.exp(norm_log_lk)
-        # 4) fuse
-        fused = model.fc_layers(z) * (scaled_lk ** args.fusion_tau) \
-                + args.fusion_lambda * norm_log_lk
-        # 5) scale/softmax
-        logits = fused / args.softmax_temp
-
+        logits = model.fc_layers(z) * scaled_lk
 
         if preds is not None:
             predictions = torch.cat((predictions, logits.detach().cpu()))
@@ -452,6 +411,34 @@ for run in range(args.runs):
     pickle.dump(targets, open(f'ds_after_targets.pkl', 'wb'))
 
     torch.save(model.state_dict(), f'{args.weights_dir}_{args.rm_ch_str}/{args.study}_{args.treat}_{args.contig_len}_{args.norm_type}_{args.balanced}_{run}_ds_after.pth')
+
+    # validation predictions/logits dump
+    model.eval()
+    val_preds = []
+    val_logits = []
+    val_targets = []
+
+    with torch.no_grad():
+        for X, y in val_dataloader:
+            z = model.conv_layers(X).view(X.size(0), -1)
+            log_lk = flow_model.score_samples(z).unsqueeze(1)
+            mean_log = log_lk.mean(0, keepdim=True)
+            std_log  = log_lk.std(0, keepdim=True) + 1e-6
+            norm_log_lk = (log_lk - mean_log) / std_log
+            scaled_lk = torch.exp(norm_log_lk)
+            logits = model.fc_layers(z) * scaled_lk
+
+            val_preds.append(torch.argmax(logits, dim=1).detach().cpu())
+            val_logits.append(logits.detach().cpu())
+            val_targets.append(y.cpu())
+
+    val_preds = torch.cat(val_preds)
+    val_logits = torch.cat(val_logits)
+    val_targets = torch.cat(val_targets)
+
+    pickle.dump(val_preds, open(f'val_preds.pkl', 'wb'))
+    pickle.dump(val_logits, open(f'val_predictions.pkl', 'wb'))
+    pickle.dump(val_targets, open(f'val_targets.pkl', 'wb'))
 
     exit()
     file.write('CONTIG WISE METRICS\n\n')

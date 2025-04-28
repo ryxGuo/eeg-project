@@ -5,6 +5,7 @@ import pickle
 
 from tqdm import tqdm
 from sklearn.utils.class_weight import compute_class_weight
+from sklearn.model_selection import train_test_split
 
 import torch
 from torch import nn, optim, autograd
@@ -41,12 +42,12 @@ parser.add_argument('--treat', type=str, default='wctrl')
 parser.add_argument('--model_type', type=str, default='cnn')
 parser.add_argument('--num_epochs', type=int, default=3)
 parser.add_argument('--lr', type=float, default=1e-4)
-parser.add_argument('--batch_size', type=int, default=16)
+parser.add_argument('--batch_size', type=int, default=32)
 parser.add_argument('--model_conf_path', type=str, default='./grid_confs/conf')
 parser.add_argument('--split', type=float, default=0.75)
 parser.add_argument('--cuda', type=bool, default=True)
-parser.add_argument('--runs', type=int, default=5)
-parser.add_argument('--pre_train_epochs', type=int, default=None)
+parser.add_argument('--runs', type=int, default=1)
+parser.add_argument('--pre_train_epochs', type=int, default=2)
 
 
 args = parser.parse_args()
@@ -146,23 +147,24 @@ for run in range(args.runs):
     file.write(f'Test patients: {str(test_pats)}\n')
 
     args.num_psd = data[train_locs[0][0]][train_locs[0][1]][train_locs[0][2]].shape[1]
+    
+    train_locs, val_locs = train_test_split(train_locs, test_size=0.2, random_state=42, shuffle=True)
 
     # For normalization
     n = get_norms(args, data, channels, typs)
-
+    
     train_dataset = EEGDataset(data_dict=data, locs=train_locs, study=args.study, treat=args.treat, norms=n)
+    val_dataset = EEGDataset(data_dict=data, locs=val_locs, study=args.study, treat=args.treat, norms=n)
     test_dataset = EEGDataset(data_dict=data, locs=test_locs, study=args.study, treat=args.treat, norms=n)
 
     # Get Dataloaders
     train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-    test_dataloader = DataLoader(test_dataset, batch_size=32, shuffle=False)
+    val_dataloader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False)
+    test_dataloader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False)
 
 
     # Get Model
-    if args.model_type == 'mlp':
-        model = MLP(num_channels=len(channels), num_psd=args.num_psd, out_dim=args.num_classes, conf=conf[1])
-    else:
-        model = CNN(num_channels=len(channels), contig_len=args.contig_len, out_dim=args.num_classes, conf=conf[1])
+    model = CNN(num_channels=len(channels), contig_len=args.contig_len, out_dim=args.num_classes, conf=conf[1])
 
     if args.cuda:
         model = model.cuda()
@@ -231,21 +233,6 @@ for run in range(args.runs):
         file.write(f'test acc: {str((acc/tot))}\n')
 
     # train_latents = torch.randn(1000, 96).cuda()
-
-    # flow_model = RealNVP(num_coupling_layers=6, input_dim=train_latents.shape[1]).cuda()
-    # flow_optimizer = optim.Adam(flow_model.parameters(), lr=0.01, weight_decay=0.01)
-
-    # print ('Fitting flow model...')
-    # pbar = tqdm(range(1000))
-    # flow_model.train()
-    # for i in pbar:
-    #     flow_optimizer.zero_grad()
-    #     loss = flow_model.log_loss(train_latents)
-    #     with torch.autograd.set_detect_anomaly(True):
-    #         loss.backward()
-    #     flow_optimizer.step()
-    #     pbar.set_description_str(desc='iter: '+str(i)+', loss: '+str(loss))
-    # flow_model.eval()
 
     gaussian_model = GaussianDensityEstimator(input_dim=train_latents.shape[1]).cuda()
     gaussian_model.fit(train_latents)
@@ -383,3 +370,27 @@ for run in range(args.runs):
     pickle.dump(targets, open(f'gaussian_after_targets.pkl', 'wb'))
 
     torch.save(model.state_dict(), f'{args.weights_dir}_{args.rm_ch_str}/{args.study}_{args.treat}_{args.contig_len}_{args.norm_type}_{args.balanced}_{run}_gaussian_after.pth')
+
+    # valication predictions/logits dump
+    model.eval()
+    val_preds = []
+    val_logits = []
+    val_targets = []
+
+    with torch.no_grad():
+        for X, y in val_dataloader:
+            hidden = model.conv_layers(X).view(X.shape[0], -1)
+            likelihood = torch.exp(gaussian_model.score_samples(hidden))
+            likelihood = likelihood.unsqueeze(1)
+            likelihood = likelihood / train_likelihood_max
+            logits = model.fc_layers(hidden) * likelihood.float()
+            val_preds.append(torch.argmax(logits, dim=1).detach().cpu())
+            val_logits.append(logits.detach().cpu())
+            val_targets.append(y.cpu())
+    val_logits = torch.cat(val_logits, dim=0)
+    val_preds = torch.cat(val_preds, dim=0)
+    val_targets = torch.cat(val_targets, dim=0)
+
+    pickle.dump(val_preds, open(f'gaussian_val_preds.pkl', 'wb'))
+    pickle.dump(val_logits, open(f'gaussian_val_predictions.pkl', 'wb'))
+    pickle.dump(val_targets, open(f'gaussian_val_targets.pkl', 'wb'))
