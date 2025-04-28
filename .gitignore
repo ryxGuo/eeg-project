@@ -14,3 +14,4 @@ weights_split_optimal_14_15/
 *.csv
 *.npy
 *.txt
+*.slurm
