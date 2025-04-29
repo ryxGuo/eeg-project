@@ -23,7 +23,7 @@ The goal is to enhance classification robustness, interpretability, and trustwor
 ## Code Structure
 - `grid_confs/` — Hyperparameter configuration files for grid search experiments
 - `grid_search/` — Scripts for hyperparameter tuning
-- `models.py` — CNN feature extractor, RealNVP flow model
+- `models.py` — CNN feature extractor, Gaussian density estimator model, RealNVP flow model
 - `utils.py` — Helper functions for training, evaluation, calibration
 - **`gaussian_splitrun.py`** —  
   Train and evaluate the Gaussian calibration pipeline:  
