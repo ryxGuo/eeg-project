@@ -6,9 +6,6 @@ results_split_14_15/
 results_split_optimal_14_15/
 weights_split_14_15/
 weights_split_optimal_14_15/
-models_diff.py
-uncertainty_eval.py
-uncertainty_diff.py
 
 # Ignore backup files
 *.pkl
