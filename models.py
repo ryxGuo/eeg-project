@@ -129,6 +129,7 @@ class CNN(nn.Module):
         return out
     
 
+# DS default: alternating binary mask + gaussian prior
 class CouplingLayer(nn.Module):
 
     def __init__(self, input_dim, hidden_dim, mask):
@@ -223,93 +224,146 @@ class RealNVP(nn.Module):
         return -self.log_prob(x).mean()
     
 
-# class Coupling(nn.Module):
-#     def __init__(self, input_shape):
-#         super(Coupling, self).__init__()
-#         output_dim = 16
-        
-#         self.t_layers = nn.Sequential(
-#             nn.Linear(input_shape, output_dim),
+# DS Variants
+# class CouplingLayer(nn.Module):
+#     def __init__(self, input_dim, hidden_dim, mask_type="alternate", mask_ratio=0.5):
+#         super(CouplingLayer, self).__init__()
+#         self.input_dim = input_dim
+#         self.hidden_dim = hidden_dim
+
+#         # Different mask types
+#         if mask_type == "alternate":
+#             mask = torch.zeros(input_dim)
+#             mask[::2] = 1
+#         elif mask_type == "random":
+#             mask = torch.zeros(input_dim)
+#             mask[torch.randperm(input_dim)[:int(input_dim * mask_ratio)]] = 1
+#         elif mask_type == "block":
+#             mask = torch.zeros(input_dim)
+#             block_size = int(input_dim * mask_ratio)
+#             mask[:block_size] = 1
+#         elif mask_type == "checkerboard":
+#             mask = torch.arange(input_dim) % 2
+#         else:
+#             raise ValueError(f"Unknown mask type: {mask_type}")
+
+#         self.register_buffer('mask', mask)
+
+#         self.scale_net = nn.Sequential(
+#             nn.Linear(input_dim, hidden_dim),
 #             nn.ReLU(),
-#             nn.Linear(output_dim, output_dim),
+#             nn.Linear(hidden_dim, hidden_dim),
 #             nn.ReLU(),
-#             nn.Linear(output_dim, output_dim),
-#             nn.ReLU(),
-#             nn.Linear(output_dim, output_dim),
-#             nn.ReLU(),
-#             nn.Linear(output_dim, input_shape)
-#         )
-        
-#         self.s_layers = nn.Sequential(
-#             nn.Linear(input_shape, output_dim),
-#             nn.ReLU(),
-#             nn.Linear(output_dim, output_dim),
-#             nn.ReLU(),
-#             nn.Linear(output_dim, output_dim),
-#             nn.ReLU(),
-#             nn.Linear(output_dim, output_dim),
-#             nn.ReLU(),
-#             nn.Linear(output_dim, input_shape),
+#             nn.Linear(hidden_dim, input_dim),
 #             nn.Tanh()
 #         )
 
-#     def forward(self, x):
-#         t = self.t_layers(x)
-#         s = self.s_layers(x)
-#         return s, t
+#         self.translate_net = nn.Sequential(
+#             nn.Linear(input_dim, hidden_dim),
+#             nn.ReLU(),
+#             nn.Linear(hidden_dim, hidden_dim),
+#             nn.ReLU(),
+#             nn.Linear(hidden_dim, input_dim)
+#         )
+
+#     def forward(self, x, invert=False):
+#         x_masked = x * self.mask
+#         s = self.scale_net(x_masked) * (1 - self.mask)
+#         t = self.translate_net(x_masked) * (1 - self.mask)
+
+#         if not invert:
+#             y = x_masked + (1 - self.mask) * (x * torch.exp(s) + t)
+#             log_det = torch.sum(s, dim=1)
+#             return y, log_det
+#         else:
+#             y = x_masked + (1 - self.mask) * ((x - t) * torch.exp(-s))
+#             return y
+
 
 # class RealNVP(nn.Module):
-#     def __init__(self, num_coupling_layers, input_dim):
+#     def __init__(self, num_coupling_layers, input_dim, hidden_dim=128,
+#                  mask_type="alternate", prior_type="gaussian"):
 #         super(RealNVP, self).__init__()
 #         self.num_coupling_layers = num_coupling_layers
-        
-#         self.distribution = D.MultivariateNormal(torch.zeros(input_dim).cuda(), torch.eye(input_dim).cuda())
-#         self.masks = torch.tensor(np.array(
-#             [np.concatenate((np.zeros(input_dim // 2), np.ones(input_dim // 2))),
-#              np.concatenate((np.ones(input_dim // 2), np.zeros(input_dim // 2)))] * (num_coupling_layers // 2)
-#         )).float().cuda()
+#         self.input_dim = input_dim
+#         self.hidden_dim = hidden_dim
+#         self.prior_type = prior_type
 
-#         self.loss_tracker = []
-#         self.layers_list = nn.ModuleList([Coupling(input_dim).cuda() for _ in range(num_coupling_layers)])
+#         self.coupling_layers = nn.ModuleList()
 
-#     def forward(self, x, dir=-1):
-#         log_det_inv = 0
-#         direction = dir
-#         for i in range(self.num_coupling_layers)[::direction]:
-#             x_masked = x * self.masks[i]
-#             reversed_mask = 1 - self.masks[i]
-#             s, t = self.layers_list[i](x_masked)
-#             s = s * reversed_mask
-#             t = t * reversed_mask
-#             gate = (direction - 1) / 2
-#             x = (
-#                 reversed_mask
-#                 * (x * torch.exp(direction * s) + direction * t * torch.exp(gate * s))
-#                 + x_masked
-#             )
-#             log_det_inv += gate * torch.sum(s, dim=1)
+#         # Different prior distributions
+#         if prior_type == "gaussian":
+#             self.register_buffer('prior_mean', torch.zeros(input_dim))
+#             self.register_buffer('prior_std', torch.ones(input_dim))
+#         elif prior_type == "laplace":
+#             self.register_buffer('prior_mean', torch.zeros(input_dim))
+#             self.register_buffer('prior_scale', torch.ones(input_dim))
+#         elif prior_type == "uniform":
+#             self.register_buffer('prior_low', -torch.ones(input_dim))
+#             self.register_buffer('prior_high', torch.ones(input_dim))
+#         else:
+#             raise ValueError(f"Unknown prior type: {prior_type}")
 
-#         return x, log_det_inv
+#         for i in range(num_coupling_layers):
+#             self.coupling_layers.append(
+#                 CouplingLayer(input_dim, hidden_dim, mask_type=mask_type))
+
+#     def log_prob(self, x):
+#         z, log_det = self.forward(x)
+
+#         if self.prior_type == "gaussian":
+#             log_prob_z = torch.distributions.Normal(
+#                 self.prior_mean, self.prior_std).log_prob(z).sum(dim=1)
+#         elif self.prior_type == "laplace":
+#             log_prob_z = torch.distributions.Laplace(
+#                 self.prior_mean, self.prior_scale).log_prob(z).sum(dim=1)
+#         elif self.prior_type == "uniform":
+#             eps = 1e-6
+#             safe_z = torch.clamp(z,
+#                                  min=self.prior_low + eps,
+#                                  max=self.prior_high - eps)
+#             log_prob_z = torch.distributions.Uniform(
+#                 self.prior_low, self.prior_high).log_prob(safe_z).sum(dim=1)
+
+#         return log_prob_z + log_det
+
+#     def sample(self, num_samples):
+#         if self.prior_type == "gaussian":
+#             z = torch.randn(num_samples, self.input_dim,
+#                             device=self.prior_mean.device,
+#                             dtype=self.prior_mean.dtype)
+#         elif self.prior_type == "laplace":
+#             z = torch.distributions.Laplace(
+#                 self.prior_mean, self.prior_scale).sample((num_samples,))
+#         elif self.prior_type == "uniform":
+#             z = torch.distributions.Uniform(
+#                 self.prior_low, self.prior_high).sample((num_samples,))
+#         x = self.inverse(z)
+#         return x
+
+#     def score_samples(self, x):
+#         return self.log_prob(x)
 
 #     def log_loss(self, x):
-#         y, logdet = self(x)
-#         log_likelihood = self.distribution.log_prob(y) + logdet
-#         return -torch.mean(log_likelihood)
-    
-#     def score_samples(self, x):
-#         y, logdet = self(x, dir=1)
-#         log_likelihood = self.distribution.log_prob(y) + logdet
-#         return log_likelihood
+#         return -self.log_prob(x).mean()
 
-#     def train_step(self, data):
-#         self.optimizer.zero_grad()
-#         loss = self.log_loss(data)
-#         loss.backward()
-#         self.optimizer.step()
-#         self.loss_tracker.append(loss.item())
-#         return {"loss": np.mean(self.loss_tracker)}
+#     def forward(self, x):
+#         z = x
+#         log_det = torch.zeros(x.shape[0], device=x.device)  # Initialize per-sample log det
 
-#     def test_step(self, data):
-#         loss = self.log_loss(data)
-#         self.loss_tracker.append(loss.item())
-#         return {"loss": np.mean(self.loss_tracker)}
+#         for layer in self.coupling_layers:
+#             z, ld = layer(z)
+#             log_det += ld
+
+#         if self.prior_type == "uniform":
+#             z = torch.tanh(z)
+#             log_det -= torch.log(1 - z.pow(2) + 1e-6).sum(dim=1)
+#         elif self.prior_type == "gaussian":
+#             z = (z - z.mean(dim=0)) / (z.std(dim=0) + 1e-6)
+#         return z, log_det
+
+#     def inverse(self, z):
+#         x = z
+#         for layer in reversed(self.coupling_layers):
+#             x = layer(x, invert=True)
+#         return x

@@ -25,26 +25,28 @@ The goal is to enhance classification robustness, interpretability, and trustwor
 - `grid_search/` — Scripts for hyperparameter tuning
 - `models.py` — CNN feature extractor, Gaussian density estimator model, RealNVP flow model
 - `utils.py` — Helper functions for training, evaluation, calibration
-- **`gaussian_splitrun.py`** —  
-  Train and evaluate the Gaussian calibration pipeline:  
-  1. Pre-train a CNN on EEG segments 
-  2. Fit a Gaussian density estimator on the CNN latents  
-  3. Scale softmax logits by normalized Gaussian likelihoods  
-  4. Save all predictions/targets
 
-- **`ds_splitrun.py`** —  
-  Train and evaluate the density-softmax pipeline:  
-  1. Pre-train the same CNN architecture 
-  2. Extract latent representations and fit a RealNVP flow  
-  3. Calibrate final softmax by scaling logits with flow densities  
-  4. Save “before” and “after” predictions/targets
+- **Gaussian calibration pipeline**  
+  - `gaussian_splitrun.py`  
+    1. Pre-train a CNN on EEG segments  
+    2. Fit a Gaussian density estimator on the CNN latents  
+    3. Scale softmax logits by normalized Gaussian likelihoods  
+    4. Save all predictions/targets  
 
-- **`uncertainty_evaluation.py`** —  
-  Compute and apply uncertainty thresholds on test outputs:  
-  1. Load “after” and validation pickles for both pipelines  
-  2. Compute per-sample predictive entropy from logits  
-  3. Find the optimal threshold on validation (Youden’s J from ROC)  
-  4. Apply that threshold to the test set, report selective accuracy, and write per-sample CSV logs  
+- **Density-Softmax pipelines**  
+  - `ds_splitrun.py` (default alternating-mask + Gaussian prior)  
+    1. Pre-train the same CNN architecture  
+    2. Extract latent representations and fit a RealNVP flow with alternating binary mask  
+    3. Calibrate final softmax by scaling logits with flow densities  
+    4. Save “before” and “after” predictions/targets  
+  - `ds_variants_splitrun.py` (custom masks & priors)  
+
+- **Uncertainty evaluation**  
+  - `uncertainty_evaluation.py`  
+    1. Load “after” and validation pickles for all pipelines  
+    2. Compute per-sample predictive entropy from logits  
+    3. Find the optimal threshold on validation (Youden’s J from ROC)  
+    4. Apply that threshold to the test set, report selective accuracy, and write per-sample CSV logs 
 
 
 ## Key Techniques

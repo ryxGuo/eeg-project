@@ -436,9 +436,9 @@ for run in range(args.runs):
     val_logits = torch.cat(val_logits)
     val_targets = torch.cat(val_targets)
 
-    pickle.dump(val_preds, open(f'val_preds.pkl', 'wb'))
-    pickle.dump(val_logits, open(f'val_predictions.pkl', 'wb'))
-    pickle.dump(val_targets, open(f'val_targets.pkl', 'wb'))
+    pickle.dump(val_preds, open(f'ds_val_preds.pkl', 'wb'))
+    pickle.dump(val_logits, open(f'ds_val_predictions.pkl', 'wb'))
+    pickle.dump(val_targets, open(f'ds_val_targets.pkl', 'wb'))
 
     exit()
     file.write('CONTIG WISE METRICS\n\n')
