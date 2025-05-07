@@ -2,6 +2,7 @@ import os
 import glob
 import pickle
 import numpy as np
+import matplotlib.pyplot as plt
 import torch
 import csv
 from sklearn.metrics import roc_curve
@@ -77,6 +78,48 @@ def load_or_none(fname):
         return None
 
 
+def plot_acc_threshold(preds, logits, targets, 
+                               num_thresholds=100, 
+                               method_name='Method',
+                               save_dir='.',
+                               dpi=300):
+
+    if hasattr(preds, "cpu"):
+        preds_np = preds.cpu().numpy()
+    else:
+        preds_np = np.asarray(preds)
+    if hasattr(targets, "cpu"):
+        targets_np = targets.cpu().numpy()
+    else:
+        targets_np = np.asarray(targets)
+
+    ent = compute_entropy(logits)
+    ent = np.asarray(ent)
+
+    thresholds = np.linspace(ent.min(), ent.max(), num_thresholds)
+    accs = []
+    for thr in thresholds:
+        mask = ent < thr
+        accs.append((preds_np[mask] == targets_np[mask]).mean() if mask.sum() else np.nan)
+
+    # Plot
+    plt.figure()
+    plt.plot(thresholds, accs, marker='.')
+    plt.xlabel('Entropy threshold')
+    plt.ylabel('Accuracy (low-uncertainty samples)')
+    plt.title(f'{method_name}: Accuracy vs Entropy Threshold')
+    plt.grid(True)
+
+    # Save
+    fname = f"{method_name.lower().replace(' ', '_')}_risk_coverage.png"
+    save_path = os.path.join(save_dir, fname)
+    plt.savefig(save_path, dpi=dpi, bbox_inches='tight')
+    print(f"Saved plot to {save_path}")
+
+    plt.show()
+
+
+
 def main():
     # Automatically find all model prefixes from *_after_preds.pkl files
     pred_files = glob.glob('*_after_preds.pkl')
@@ -112,6 +155,9 @@ def main():
             print(f"Warning: no validation files for '{prefix}', using median entropy {threshold:.4f}")
 
         evaluate(preds, logits, targets, threshold, method_name)
+
+        plot_acc_threshold(preds, logits, targets, num_thresholds=100, method_name=method_name)
+
 
 
 if __name__ == "__main__":
